@@ -20,6 +20,8 @@
 package io.github.dsheirer.module.decode.dmr;
 
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.health.ChannelHealth;
+import io.github.dsheirer.health.HealthRegistry;
 import io.github.dsheirer.identifier.site.SiteIdentifier;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRNetwork;
@@ -46,6 +48,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -81,6 +84,10 @@ public class DMRNetworkConfigurationMonitor
     private Integer mColorCodeTS2;
     private DMRChannel mCurrentChannel;
     private Channel mChannel;
+    private ChannelHealth mHealth;
+    private Integer mReportedNetwork;
+    private Integer mReportedSite;
+    private Integer mReportedColorCode;
 
     /**
      * Constructs an instance
@@ -121,6 +128,52 @@ public class DMRNetworkConfigurationMonitor
     }
 
     /**
+     * Gives the site's identity, as its control channel broadcasts it, to node health reports: network, site and
+     * color code, each as it changes.  A traffic channel's monitor gives none (its site's control channel does).
+     */
+    private void reportIdentity()
+    {
+        if(mChannel == null || !mChannel.isStandardChannel())
+        {
+            return;
+        }
+
+        Integer network = mDMRNetwork != null && mDMRNetwork.getValue() instanceof Integer n ? n : null;
+        Integer site = mDMRSite != null && mDMRSite.getValue() instanceof Integer n ? n : null;
+        Integer colorCode = mColorCodeTS1 != null ? mColorCodeTS1 : mColorCodeTS2;
+
+        if(Objects.equals(network, mReportedNetwork) && Objects.equals(site, mReportedSite) &&
+            Objects.equals(colorCode, mReportedColorCode))
+        {
+            return;
+        }
+
+        if(mHealth == null)
+        {
+            mHealth = HealthRegistry.getInstance().channel(mChannel);
+        }
+
+        if(network != null)
+        {
+            mHealth.identity("network", network);
+        }
+
+        if(site != null)
+        {
+            mHealth.identity("site", site);
+        }
+
+        if(colorCode != null)
+        {
+            mHealth.identity("colorCode", colorCode);
+        }
+
+        mReportedNetwork = network;
+        mReportedSite = site;
+        mReportedColorCode = colorCode;
+    }
+
+    /**
      * Processes data messages to capture the color code for each timeslot.
      * @param dm data message
      */
@@ -134,6 +187,8 @@ public class DMRNetworkConfigurationMonitor
         {
             mColorCodeTS2 = dm.getSlotType().getColorCode();
         }
+
+        reportIdentity();
     }
 
     /**
@@ -199,6 +254,8 @@ public class DMRNetworkConfigurationMonitor
                     mBrand = BRAND_TIER_3_TRUNKING;
                 }
         }
+
+        reportIdentity();
     }
 
     /**
@@ -329,6 +386,8 @@ public class DMRNetworkConfigurationMonitor
                 mBrand = BRAND_MOTOROLA_CONNECT_PLUS;
                 break;
         }
+
+        reportIdentity();
     }
 
     /**
