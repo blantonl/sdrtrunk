@@ -26,6 +26,9 @@ import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.IChannelEventListener;
 import io.github.dsheirer.controller.channel.IChannelEventProvider;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
+import io.github.dsheirer.health.CallOutcome;
+import io.github.dsheirer.health.CallTally;
+import io.github.dsheirer.health.HealthRegistry;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -125,6 +128,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private Listener<IDecodeEvent> mDecodeEventListener;
     private final TrafficChannelTeardownMonitor mTrafficChannelTeardownMonitor = new TrafficChannelTeardownMonitor();
     private final Channel mParentChannel;
+    private CallTally mCallTally;
     private ScrambleParameters mPhase2ScrambleParameters;
     private Listener<IMessage> mMessageListener;
     private boolean mIgnoreDataCalls;
@@ -1227,7 +1231,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * @param identifierCollection containing identifiers for the call
      * @param timestamp of the request event
      */
-    private void requestTrafficChannelStart(Channel trafficChannel, APCO25Channel apco25Channel,
+    private boolean requestTrafficChannelStart(Channel trafficChannel, APCO25Channel apco25Channel,
                                             IdentifierCollection identifierCollection, long timestamp)
     {
         if(apco25Channel != null && apco25Channel.getDownlinkFrequency() > 0 && getInterModuleEventBus() != null)
@@ -1254,6 +1258,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             startChannelRequest.addPreloadDataContent(new PatchGroupPreLoadDataContent(identifierCollection, timestamp));
             startChannelRequest.addPreloadDataContent(new P25FrequencyBandPreloadDataContent(mFrequencyBandMap.values()));
             getInterModuleEventBus().post(startChannelRequest);
+            return true;
         }
         else
         {
@@ -1266,7 +1271,22 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 mAvailablePhase2TrafficChannelQueue.add(trafficChannel);
             }
+
+            return false;
         }
+    }
+
+    /**
+     * Calls announced by this control channel and what became of each, for node health reports.
+     */
+    private CallTally calls()
+    {
+        if(mCallTally == null)
+        {
+            mCallTally = HealthRegistry.getInstance().calls(mParentChannel);
+        }
+
+        return mCallTally;
     }
 
     /**
@@ -1336,14 +1356,19 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     tracker.addChannelDescriptorIfMissing(apco25Channel);
                     broadcast(tracker);
 
-                    requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp);
+                    if(!requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp))
+                    {
+                        tracker.tally(calls(), CallOutcome.NO_FREQUENCY);
+                    }
                 }
                 else
                 {
                     tracker.setDetails(MAX_TRAFFIC_CHANNELS_EXCEEDED);
+                    tracker.tally(calls(), CallOutcome.NO_RECORDER);
                 }
             }
 
+            tallyFollowedOrIgnored(tracker, frequency, isDataChannelGrant);
             return;
         }
 
@@ -1357,6 +1382,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                         .identifiers(ic)
                         .build();
                 tracker = new P25ChannelEventTracker(event);
+                tracker.tally(calls(), CallOutcome.DATA);
                 addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
                 broadcast(tracker);
             }
@@ -1375,6 +1401,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     .build();
             tracker = new P25ChannelEventTracker(event);
             tracker.setEncrypted(true);
+            tracker.tally(calls(), CallOutcome.ENCRYPTED);
             addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
             broadcast(tracker);
             return;
@@ -1400,13 +1427,39 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             if(trafficChannel == null)
             {
                 tracker.setDetails(MAX_TRAFFIC_CHANNELS_EXCEEDED + " - " + (event.getDetails() != null ? event.getDetails() : ""));
+                tracker.tally(calls(), CallOutcome.NO_RECORDER);
                 return;
             }
 
-            requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp);
+            tracker.tally(calls(), requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp) ?
+                CallOutcome.RECORDED : CallOutcome.NO_FREQUENCY);
+        }
+        else
+        {
+            tracker.tally(calls(), CallOutcome.RECORDED);
         }
 
         broadcast(tracker);
+    }
+
+    /**
+     * Counts a continuing call that this update didn't try to allocate a traffic channel for: followed when a
+     * traffic channel is running on its frequency, or ignored by the user's choice.
+     */
+    private void tallyFollowedOrIgnored(P25ChannelEventTracker tracker, long frequency, boolean isDataChannelGrant)
+    {
+        if(mAllocatedTrafficChannelMap.containsKey(frequency))
+        {
+            tracker.tally(calls(), CallOutcome.RECORDED);
+        }
+        else if(mIgnoreDataCalls && isDataChannelGrant)
+        {
+            tracker.tally(calls(), CallOutcome.DATA);
+        }
+        else if(mIgnoreEncryptedCalls && tracker.isEncrypted())
+        {
+            tracker.tally(calls(), CallOutcome.ENCRYPTED);
+        }
     }
 
     /**
@@ -1476,12 +1529,26 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     tracker.setDetails("PHASE 2 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""));
                     tracker.addChannelDescriptorIfMissing(apco25Channel);
                     broadcast(tracker);
-                    requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp);
+
+                    if(!requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp))
+                    {
+                        tracker.tally(calls(), CallOutcome.NO_FREQUENCY);
+                    }
                 }
                 else
                 {
                     tracker.setDetails(MAX_TRAFFIC_CHANNELS_EXCEEDED);
+                    tracker.tally(calls(), CallOutcome.NO_RECORDER);
                 }
+            }
+
+            if(getCurrentControlFrequency() == frequency)
+            {
+                tracker.tally(calls(), CallOutcome.RECORDED);
+            }
+            else
+            {
+                tallyFollowedOrIgnored(tracker, frequency, isDataChannelGrant);
             }
 
             return;
@@ -1497,6 +1564,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 .build();
 
             tracker = new P25ChannelEventTracker(event);
+            tracker.tally(calls(), CallOutcome.DATA);
             addTracker(tracker, frequency, timeslot);
             broadcast(tracker);
             return;
@@ -1515,6 +1583,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             tracker = new P25ChannelEventTracker(event);
             tracker.setEncrypted(true);
+            tracker.tally(calls(), CallOutcome.ENCRYPTED);
             addTracker(tracker, frequency, timeslot);
             broadcast(tracker);
             return;
@@ -1539,11 +1608,18 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             if(trafficChannel == null)
             {
                 tracker.setDetails(MAX_TRAFFIC_CHANNELS_EXCEEDED + " - IGNORED");
+                tracker.tally(calls(), CallOutcome.NO_RECORDER);
             }
             else
             {
-                requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp);
+                tracker.tally(calls(), requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp) ?
+                    CallOutcome.RECORDED : CallOutcome.NO_FREQUENCY);
             }
+        }
+        else
+        {
+            //A traffic channel is running on the frequency, or it's the control channel's own: followed.
+            tracker.tally(calls(), CallOutcome.RECORDED);
         }
 
         broadcast(tracker);
@@ -1874,6 +1950,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                                         //processing manager set the 'tuner not available' in the details already
                                         P25ChannelEventTracker tracker = getTracker(rejectedFrequency, P25P1Message.TIMESLOT_1);
 
+                                        if(tracker != null && tracker.getCallOutcome() == CallOutcome.RECORDED)
+                                        {
+                                            tracker.tally(calls(), CallOutcome.NO_SOURCE);
+                                        }
+
                                         if(tracker != null && !tracker.getEvent().getDetails().contains(CHANNEL_START_REJECTED))
                                         {
                                             tracker.setDetails(CHANNEL_START_REJECTED + " " + channelEvent.getDescription() +
@@ -1925,6 +2006,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                                         P25ChannelEventTracker tracker = getTracker(rejectedFrequency, P25P1Message.TIMESLOT_1);
                                         if (tracker != null)
                                         {
+                                            if(tracker.getCallOutcome() == CallOutcome.RECORDED)
+                                            {
+                                                tracker.tally(calls(), CallOutcome.NO_SOURCE);
+                                            }
                                             broadcast(tracker);
                                         }
 
@@ -1933,6 +2018,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                                         P25ChannelEventTracker tracker2 = getTracker(rejectedFrequency, P25P1Message.TIMESLOT_2);
                                         if (tracker2 != null)
                                         {
+                                            if(tracker2.getCallOutcome() == CallOutcome.RECORDED)
+                                            {
+                                                tracker2.tally(calls(), CallOutcome.NO_SOURCE);
+                                            }
                                             broadcast(tracker2);
                                         }
                                     });

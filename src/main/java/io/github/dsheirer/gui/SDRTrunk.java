@@ -44,6 +44,7 @@ import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.log.ApplicationLog;
 import io.github.dsheirer.map.MapService;
 import io.github.dsheirer.module.log.EventLogManager;
+import io.github.dsheirer.health.HealthRegistry;
 import io.github.dsheirer.monitor.DiagnosticMonitor;
 import io.github.dsheirer.monitor.ResourceMonitor;
 import io.github.dsheirer.playlist.PlaylistManager;
@@ -182,6 +183,7 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         mTunerManager = new TunerManager(mUserPreferences);
         mTunerManager.start();
+        HealthRegistry.getInstance().setTunerManager(mTunerManager);
 
         mSettingsManager = new SettingsManager();
 
