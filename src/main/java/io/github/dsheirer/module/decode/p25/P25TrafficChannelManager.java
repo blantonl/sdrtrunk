@@ -1356,10 +1356,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     tracker.addChannelDescriptorIfMissing(apco25Channel);
                     broadcast(tracker);
 
-                    if(!requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp))
-                    {
-                        tracker.tally(calls(), CallOutcome.NO_FREQUENCY);
-                    }
+                    startAndTally(tracker, trafficChannel, apco25Channel, ic, timestamp);
                 }
                 else
                 {
@@ -1431,8 +1428,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 return;
             }
 
-            tracker.tally(calls(), requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp) ?
-                CallOutcome.RECORDED : CallOutcome.NO_FREQUENCY);
+            startAndTally(tracker, trafficChannel, apco25Channel, ic, timestamp);
         }
         else
         {
@@ -1440,6 +1436,23 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         }
 
         broadcast(tracker);
+    }
+
+    /**
+     * Starts a traffic channel for a call and counts the call as recorded.  It's counted before the request, because a
+     * request no tuner can take is rejected while it's made (the rejection moves the call to noSource), and a call
+     * counted after would be counted recorded over it.  A grant whose channel can't be turned into a frequency is
+     * never requested: noFrequency.
+     */
+    private void startAndTally(P25ChannelEventTracker tracker, Channel trafficChannel, APCO25Channel apco25Channel,
+                               IdentifierCollection ic, long timestamp)
+    {
+        tracker.tally(calls(), CallOutcome.RECORDED);
+
+        if(!requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp))
+        {
+            tracker.tally(calls(), CallOutcome.NO_FREQUENCY);
+        }
     }
 
     /**
@@ -1530,10 +1543,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     tracker.addChannelDescriptorIfMissing(apco25Channel);
                     broadcast(tracker);
 
-                    if(!requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp))
-                    {
-                        tracker.tally(calls(), CallOutcome.NO_FREQUENCY);
-                    }
+                    startAndTally(tracker, trafficChannel, apco25Channel, ic, timestamp);
                 }
                 else
                 {
@@ -1612,8 +1622,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             }
             else
             {
-                tracker.tally(calls(), requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp) ?
-                    CallOutcome.RECORDED : CallOutcome.NO_FREQUENCY);
+                startAndTally(tracker, trafficChannel, apco25Channel, ic, timestamp);
             }
         }
         else
