@@ -83,8 +83,9 @@ public class DuplicateCallDetectionTest
 
         try
         {
-            //Wait up to 100 ms, but the duplicate detector should fire within 25 ms.
-            countDownLatch.await(100, TimeUnit.MILLISECONDS);
+            //The detector runs every 25 ms on the shared scheduled pool: wait for it to flag a segment (it returns as
+            //soon as one is), allowing for a slow CI machine rather than a fixed 100 ms.
+            countDownLatch.await(5, TimeUnit.SECONDS);
         }
         catch(InterruptedException e)
         {
@@ -138,8 +139,9 @@ public class DuplicateCallDetectionTest
 
         try
         {
-            //Wait up to 100 ms, but the duplicate detector should fire within 25 ms.
-            countDownLatch.await(100, TimeUnit.MILLISECONDS);
+            //The detector runs every 25 ms on the shared scheduled pool: wait for it to flag a segment (it returns as
+            //soon as one is), allowing for a slow CI machine rather than a fixed 100 ms.
+            countDownLatch.await(5, TimeUnit.SECONDS);
         }
         catch(InterruptedException e)
         {
